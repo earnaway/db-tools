@@ -32,7 +32,7 @@ class Table(object):
 def get_tables(conn, schemas):
     schema_list = ", ".join("'%s'" % sn for sn in schemas)
     cursor = conn.cursor()
-    sql = """SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema IN (%s) AND table_type = 'BASE TABLE'""" % schema_list
+    sql = """SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema IN (%s) AND table_type = 'BASE TABLE' AND table_name NOT IN ('migrations', 'jobs', 'failed_jobs')""" % schema_list
     all_tables = []
     cursor.execute(sql)
     for table_schema, table_name in cursor.fetchall():
@@ -103,18 +103,40 @@ def to_html_table(table):
     return ''.join(parts)
 
 def guess_node_height(table):
-    ROW_HEIGHT = 22
+    ROW_HEIGHT = 23
     EXTRA = 36
     return len(table.columns) * ROW_HEIGHT + EXTRA
 
+def guess_node_width(table):
+    COL_WIDTH = 8
+    EXTRA = 20
+    namewidth = 0
+    name = ''
+    for name, type, nullable in table.columns:
+        label = "%s" % (name)
+        if len(label) > namewidth:
+            name = label
+            namewidth = len(label)
+
+    typewidth = 0
+    type = ''
+    for name, type, nullable in table.columns:
+        label = "%s" % (type)
+        if len(label) > typewidth:
+            type = label
+            typewidth = len(label)
+
+    return (namewidth+typewidth)*COL_WIDTH+EXTRA
+
 def to_graphml_node(table, node_id):
-    label = "%s.%s" % (table.schema, table.name)
+    label = "%s" % (table.name)
     content = escape('<html>' + to_html_table(table))
     height = guess_node_height(table)
+    width = guess_node_width(table)
     return """<node id="%(node_id)s">
       <data key="d6">
         <y:GenericNode configuration="com.yworks.entityRelationship.big_entity">
-          <y:Geometry height="%(height)d" width="153.0" x="-76.5" y="226.5"/>
+          <y:Geometry height="%(height)d" width="%(width)d" x="-76.5" y="226.5"/>
           <y:Fill color="#E8EEF7" color2="#B7C9E3" transparent="false"/>
           <y:BorderStyle color="#000000" type="line" width="1.0"/>
           <y:NodeLabel alignment="center" autoSizePolicy="content" backgroundColor="#B7C9E3"
@@ -140,9 +162,25 @@ def to_graphml_node(table, node_id):
       </data>
     </node>""" % locals()
 
-def to_graphml_edge(from_id, to_id, edge_id):
-    return """    <edge id="%s" source="%s" target="%s">
-    </edge>""" % (edge_id, from_id, to_id)
+def to_graphml_edge(from_id, to_id, edge_id, name):
+    name = "%s" % (name)
+    return """    <edge id="%s" source="%s" target="%s"><data key="d10">
+        <y:PolyLineEdge>
+          <y:Path sx="0.0" sy="213.5" tx="0.0" ty="-190.5"/>
+          <y:LineStyle color="#000000" type="line" width="1.0"/>
+          <y:Arrows source="none" target="standard"/>
+          <y:EdgeLabel alignment="center" configuration="AutoFlippingLabel" distance="0.5" fontFamily="Dialog" fontSize="12" fontStyle="plain" hasBackgroundColor="false" hasLineColor="false" modelName="custom" preferredPlacement="anywhere" ratio="0.5" textColor="#000000" visible="true" >%s<y:LabelModel>
+              <y:SmartEdgeLabelModel autoRotationEnabled="true" defaultAngle="0.0" defaultDistance="5.0"/>
+            </y:LabelModel>
+            <y:ModelParameter>
+              <y:SmartEdgeLabelModelParameter angle="0.0" distance="11.0" distanceToCenter="true" position="right" ratio="0.5" segment="0"/>
+            </y:ModelParameter>
+            <y:PreferredPlacementDescriptor angle="0.0" angleOffsetOnRightSide="0" angleReference="absolute" angleRotationOnRightSide="co" distance="-1.0" frozen="true" placement="anywhere" side="anywhere" sideReference="relative_to_edge_flow"/>
+          </y:EdgeLabel>
+          <y:BendStyle smoothed="true"/>
+        </y:PolyLineEdge>
+      </data>
+    </edge>""" % (edge_id, from_id, to_id, name)
 
 def to_graphml(all_tables):
     next_id = 1
@@ -181,7 +219,7 @@ def to_graphml(all_tables):
         for fk in t.fks:
             from_id = t.node_id
             to_id = tables_by_name[(fk[1], fk[2])].node_id
-            parts.append(to_graphml_edge(from_id, to_id, next_id))
+            parts.append(to_graphml_edge(from_id, to_id, next_id, fk[0][0]))
             next_id += 1
     
     parts.append("""  </graph>
